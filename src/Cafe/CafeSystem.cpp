@@ -1331,6 +1331,7 @@ namespace CafeSystem
         {
             std::string mlcStoragePath = GetMlcStoragePath(it.first);
             it.second->Unmount(mlcStoragePath);
+			delete it.second;
         }
         m_mlcMountedTitles.clear();
     }

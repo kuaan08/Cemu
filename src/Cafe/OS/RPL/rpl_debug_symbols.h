@@ -8,8 +8,9 @@ enum RplDebugSymbolType : uint8
 
 struct rplDebugSymbolBase
 {
+	virtual ~rplDebugSymbolBase() = default;
 	RplDebugSymbolType type;
-	rplDebugSymbolBase* next;
+	rplDebugSymbolBase* next{};
 };
 
 struct rplDebugSymbolComment : rplDebugSymbolBase

@@ -298,7 +298,9 @@ void D3D11Renderer::Shutdown()
 	{
 		m_context->ClearState();
 		m_context->Flush();
+		WaitForGpuIdle();
 	}
+	ReleaseReconstructibleCaches();
 	Renderer::Shutdown();
 	glslang::FinalizeProcess();
 }
@@ -521,6 +523,63 @@ void D3D11Renderer::RecoverFromMemoryPressure(const char* resourceName, bool evi
 #endif
 }
 
+void D3D11Renderer::ReleaseReconstructibleCaches()
+{
+	// These objects are derived entirely from GX2 state or shader metadata. They
+	// used to remain resident until renderer destruction, so visiting new areas
+	// could make a long session grow monotonically even after textures were
+	// trimmed. The immediate context may retain the currently bound object; all
+	// other entries are released here and the normal draw path recreates them.
+	m_inputLayout.Reset();
+	m_inputLayoutKey = 0;
+	m_inputLayoutKeyValid = false;
+	m_appliedRasterizerState.Reset();
+	m_appliedBlendState.Reset();
+	m_appliedDepthStencilState.Reset();
+	m_appliedBlendStateValid = false;
+	m_appliedDepthStencilStateValid = false;
+	m_appliedViewportValid = false;
+	m_appliedScissorValid = false;
+	m_appliedPrimitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+
+	m_inputLayoutCache.clear();
+	m_inputLayoutCache.rehash(0);
+	m_samplerCache.clear();
+	m_samplerCache.rehash(0);
+	m_rasterizerCache.clear();
+	m_rasterizerCache.rehash(0);
+	m_blendCache.clear();
+	m_blendCache.rehash(0);
+	m_depthStencilCache.clear();
+	m_depthStencilCache.rehash(0);
+	m_rectShaderCache.clear();
+	m_rectShaderCache.rehash(0);
+	m_seenLogicalPipelines.clear();
+	m_seenLogicalPipelines.rehash(0);
+	m_reportedDebugWarnings.clear();
+	m_reportedDebugWarnings.rehash(0);
+	{
+		std::lock_guard lock(m_failedShaderMutex);
+		m_failedShaderKeys.clear();
+		m_failedShaderKeys.rehash(0);
+	}
+
+	for (auto& bytes : m_uniformScratch)
+		std::vector<uint8>().swap(bytes);
+	for (auto& bytes : m_uploadedUniformScratch)
+		std::vector<uint8>().swap(bytes);
+	m_uniformScratchUploaded.fill(false);
+	m_uniformShaderKeys.fill(0);
+	m_samplerSwizzleUploaded.fill(false);
+
+	m_feedbackViews.clear();
+	m_feedbackViews.shrink_to_fit();
+	m_feedbackResources.clear();
+	m_feedbackResources.shrink_to_fit();
+	m_feedbackSnapshots.clear();
+	m_feedbackSnapshots.shrink_to_fit();
+}
+
 uint64 D3D11Renderer::ShaderFailureKey(RendererShader::ShaderType type, uint64 baseHash,
 	uint64 auxHash) const
 {
@@ -616,9 +675,7 @@ void D3D11Renderer::CheckMemoryPressure()
 	// retired so it cannot permanently consume Series S headroom.
 	m_bufferCopyScratch.Reset();
 	m_bufferCopyScratchCapacity = 0;
-	m_feedbackViews.clear();
-	m_feedbackResources.clear();
-	m_feedbackSnapshots.clear();
+	ReleaseReconstructibleCaches();
 	ComPtr<IDXGIDevice3> dxgiDevice3;
 	if (SUCCEEDED(m_device.As(&dxgiDevice3)))
 		dxgiDevice3->Trim();

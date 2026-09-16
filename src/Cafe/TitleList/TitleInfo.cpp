@@ -494,6 +494,7 @@ bool TitleInfo::Mount(std::string_view virtualPath, std::string_view subfolder, 
 		{
 			cemuLog_log(LogType::Force, "Failed to mount {} to {}", virtualPath, subfolder);
 			delete m_wudVolume;
+			m_wudVolume = nullptr;
 			return false;
 		}
 	}
@@ -510,6 +511,7 @@ bool TitleInfo::Mount(std::string_view virtualPath, std::string_view subfolder, 
 		{
 			cemuLog_log(LogType::Force, "Failed to mount {} to {}", virtualPath, subfolder);
 			_ZArchivePool_ReleaseInstance(m_fullPath, m_zarchive);
+			m_zarchive = nullptr;
 			return false;
 		}
 	}

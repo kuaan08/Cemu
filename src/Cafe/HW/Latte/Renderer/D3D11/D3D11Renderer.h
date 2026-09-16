@@ -121,6 +121,7 @@ private:
 		ID3D11DepthStencilView* depth);
 	void InvalidateNativePipelineState();
 	void RecoverFromMemoryPressure(const char* resourceName, bool evictIndexCache);
+	void ReleaseReconstructibleCaches();
 	void FlushBufferCacheUploads();
 	void CheckMemoryPressure();
 	bool WaitForGpuIdle();

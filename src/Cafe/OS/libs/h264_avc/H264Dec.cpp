@@ -7,6 +7,10 @@
 
 #include "h264dec.h"
 
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
 enum class H264DEC_STATUS : uint32
 {
 	SUCCESS = 0x0,
@@ -380,6 +384,32 @@ namespace H264
 		session->Destroy();
 		delete session;
 		sDecoderSessions.erase(it);
+	}
+
+	static void _DestroyAllDecoderSessions()
+	{
+		// A title is not required to reach H264DECClose when it crashes or is
+		// stopped by the host. Detach every backend from the global lookup first,
+		// then destroy it without holding the registry mutex because Destroy()
+		// may join decoder workers.
+		std::vector<H264DecoderBackend*> sessions;
+		{
+			std::unique_lock lock(sDecoderSessionsMutex);
+			sessions.reserve(sDecoderSessions.size());
+			for (const auto& entry : sDecoderSessions)
+			{
+				auto* session = entry.second;
+				if (session)
+					sessions.emplace_back(session);
+			}
+			sDecoderSessions.clear();
+			sDecoderSessions.rehash(0);
+		}
+		for (auto* session : sessions)
+		{
+			session->Destroy();
+			delete session;
+		}
 	}
 
 	uint32 H264DECOpen(void* workMemory)
@@ -784,6 +814,11 @@ namespace H264
 
 			cafeExportRegister("h264", H264DECCheckDecunitLength, LogType::H264);
 		};
+
+		void RPLUnmapped() override
+		{
+			_DestroyAllDecoderSessions();
+		}
 	}s_COSh264Module;
 
 	COSModule* GetModule()

@@ -7,12 +7,18 @@ void rplDebugSymbol_createComment(MPTR address, const wchar_t* comment)
 	auto new_comment = new rplDebugSymbolComment();
 	new_comment->type = RplDebugSymbolComment;
 	new_comment->comment = comment;
-	map_DebugSymbols[address] = new_comment;
+	auto [it, inserted] = map_DebugSymbols.try_emplace(address, new_comment);
+	if (!inserted)
+	{
+		delete it->second;
+		it->second = new_comment;
+	}
 }
 
 rplDebugSymbolBase* rplDebugSymbol_getForAddress(MPTR address)
 {
-	return map_DebugSymbols[address];
+	const auto it = map_DebugSymbols.find(address);
+	return it != map_DebugSymbols.end() ? it->second : nullptr;
 }
 
 const std::map<MPTR, rplDebugSymbolBase*>& rplDebugSymbol_getSymbols()
