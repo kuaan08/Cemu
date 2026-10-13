@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "DirectXPage.xaml.h"
+#include "XboxOneProbe.h"
 
 #include <windows.ui.xaml.media.dxinterop.h>
 
@@ -28,6 +29,11 @@ using namespace Windows::UI::Xaml::Media::Imaging;
 
 namespace
 {
+#if defined(CEMU_XBOX_ONE_V1)
+constexpr int kHostGraphicsApi = 4; // modified Cemu GraphicAPI::kD3D12
+#else
+constexpr int kHostGraphicsApi = 3; // modified Cemu GraphicAPI::kD3D11
+#endif
 const auto VisibleValue = static_cast<Windows::UI::Xaml::Visibility>(0);
 const auto CollapsedValue = static_cast<Windows::UI::Xaml::Visibility>(1);
 constexpr wchar_t LocalInstallFolderName[] = L"GamesToInstall";
@@ -518,6 +524,22 @@ void DirectXPage::InitializeEmulator(float width, float height)
 {
 	if (m_main || width <= 0.0f || height <= 0.0f)
 		return;
+
+#if defined(CEMU_XBOX_ONE_V1)
+	// Game mode required for DX12 hardware. Do not silently fall back to WARP.
+	const auto probe = XboxOneProbe::ProbeD3D12();
+	if (!probe.available)
+	{
+		char reason[240]{};
+		sprintf_s(reason, sizeof(reason),
+			"Xbox One DX12 hardware FL11_0 unavailable (HRESULT 0x%08X). Set package type to Game in Dev Home.",
+			static_cast<unsigned int>(probe.status));
+		AppendError(reason);
+		launchStatus->Text = "D3D12 hardware unavailable. Set app type to Game in Dev Home.";
+		return;
+	}
+	OutputDebugStringA("[Cemu Xbox One V1] DX12 hardware FL11_0 available.\n");
+#endif
 
 	// Creating the template swap chain in the page constructor gives it a 1x1
 	// back buffer because XAML has not performed layout yet. Hand it to Cemu
@@ -2128,12 +2150,12 @@ void DirectXPage::LoadSettings()
 	select(emulatedControllerBox, settings.emulated_controller_type, 3);
 	// The UWP host exposes one supported graphics path. Normalize settings from
 	// older builds so an unsupported saved value cannot remain active.
-	if (settings.graphics_api != 3)
+	if (settings.graphics_api != kHostGraphicsApi)
 	{
-		settings.graphics_api = 3;
+		settings.graphics_api = kHostGraphicsApi;
 		m_main->SetSettings(settings);
 	}
-	rendererMetricsText->Text = "Renderer         D3D11";
+	rendererMetricsText->Text = kHostGraphicsApi == 4 ? "Renderer         D3D12 (experimental)" : "Renderer         D3D11";
 	select(vsyncBox, settings.vsync == 0 ? 0 : 1, 1);
 	bootSoundCheck->IsChecked = settings.play_boot_sound != 0;
 	disableScreensaverCheck->IsChecked = settings.disable_screensaver != 0;
@@ -2222,7 +2244,7 @@ void DirectXPage::SaveSettings()
 	settings.cpu_mode = cpuModeBox->SelectedIndex;
 	settings.console_language = consoleLanguageBox->SelectedIndex;
 	settings.emulated_controller_type = emulatedControllerBox->SelectedIndex;
-	settings.graphics_api = 3;
+	settings.graphics_api = kHostGraphicsApi;
 	settings.vsync = vsyncBox->SelectedIndex;
 	settings.play_boot_sound = checked(bootSoundCheck);
 	settings.disable_screensaver = checked(disableScreensaverCheck);

@@ -150,7 +150,13 @@ void DX::DeviceResources::CreateDeviceResources()
 
 	// The embedded renderer has one strict device contract on every supported
 	// machine: DirectX 11 Feature Level 11.0. Do not negotiate up or down.
+	// Xbox One UWP D3D11 hardware exposes FL 10_1. This device is only
+	// the host presentation surface; Cemu renders via its own D3D12 backend.
+#if defined(CEMU_XBOX_ONE_V1)
+	const D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_10_1 };
+#else
 	const D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
+#endif
 
 	// Crie o objeto do dispositivo de API do Direct3D 11 e um contexto correspondente.
 	ComPtr<ID3D11Device> device;
@@ -171,6 +177,11 @@ void DX::DeviceResources::CreateDeviceResources()
 
 	if (FAILED(hr))
 	{
+#if defined(CEMU_XBOX_ONE_V1)
+		// No software/WARP fallback on Xbox One.
+		OutputDebugStringA("[Cemu Xbox One V1] Hardware D3D11 FL 10_1 failed.\n");
+		DX::ThrowIfFailed(hr);
+#else
 		// Se a inicialização falhar, retorne para o dispositivo WARP.
 		// Para obter mais informações sobre o WARP, consulte: 
 		// https://go.microsoft.com/fwlink/?LinkId=286690
@@ -188,6 +199,7 @@ void DX::DeviceResources::CreateDeviceResources()
 				&context
 				)
 			);
+#endif
 	}
 
 	// Armazene ponteiros para o dispositivo da API do Direct3D 11.3 e o contexto imediato.
