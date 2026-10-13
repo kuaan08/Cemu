@@ -1,0 +1,100 @@
+name: Import upstream emulator repositories
+
+# Run once on introduction, or manually to import any missing branch.
+# Existing branches are never overwritten; changes made to them remain intact.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/import-upstreams.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    name: Import ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Cemu Core
+            source: rodrigoandrigo/Cemu
+            source_branch: build-msvc-d3d11
+            pinned_commit: c70bca6f94c94dc7fc8e5bdda5e55d85c500f371
+            target_branch: xbox-one/cemu-core
+          - name: Cemu UWP Host
+            source: rodrigoandrigo/Cemu-UWP-Host
+            source_branch: main
+            pinned_commit: 7dbfb6aa8716593cf7caed3cbcd39b07aee58c2e
+            target_branch: xbox-one/uwp-host
+          - name: SDL3 UWP
+            source: rodrigoandrigo/SDL3_UWP
+            source_branch: main
+            pinned_commit: 37ee4ec4f4427e45dab91d1b40a5d075cb7ae255
+            target_branch: xbox-one/sdl3-uwp
+
+    steps:
+      - name: Check whether target branch exists
+        id: branch
+        env:
+          TARGET_BRANCH: ${{ matrix.target_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --quiet --exit-code --heads "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${TARGET_BRANCH}" > /dev/null; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "Existing branch ${TARGET_BRANCH} will not be overwritten."
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Clone complete source history
+        if: steps.branch.outputs.exists == 'false'
+        env:
+          UPSTREAM: ${{ matrix.source }}
+          SOURCE_BRANCH: ${{ matrix.source_branch }}
+          PINNED_COMMIT: ${{ matrix.pinned_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --single-branch --no-tags --branch "${SOURCE_BRANCH}" "https://github.com/${UPSTREAM}.git" imported
+          actual="$(git -C imported rev-parse HEAD)"
+          echo "Imported source HEAD: ${actual}"
+          if [[ "${actual}" != "${PINNED_COMMIT}" ]]; then
+            echo "::error::Upstream changed; review new source before importing (${actual} != ${PINNED_COMMIT})."
+            exit 1
+          fi
+          # The source Git history, tracked source files, and git submodule
+          # references are kept. Individual submodule repos are not vendored.
+
+      - name: Push imported source into dedicated branch
+        if: steps.branch.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ matrix.target_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -C imported -c "http.extraheader=AUTHORIZATION: basic ${auth}" \
+            push --quiet "https://github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/${TARGET_BRANCH}"
+          echo "Imported source to refs/heads/${TARGET_BRANCH}"
+
+      - name: Confirm imported commit
+        if: steps.branch.outputs.exists == 'false'
+        env:
+          PINNED_COMMIT: ${{ matrix.pinned_commit }}
+          TARGET_BRANCH: ${{ matrix.target_branch }}
+        run: |
+          set -euo pipefail
+          actual="$(git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${TARGET_BRANCH}" | cut -f1)"
+          if [[ "${actual}" != "${PINNED_COMMIT}" ]]; then
+            echo "::error::The imported branch does not match the selected upstream revision."
+            exit 1
+          fi
+          echo "Verified ${TARGET_BRANCH} = ${actual}"
