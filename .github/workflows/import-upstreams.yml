@@ -71,6 +71,21 @@ jobs:
           # The source Git history, tracked source files, and git submodule
           # references are kept. Individual submodule repos are not vendored.
 
+      - name: Remove upstream GitHub Actions workflow files from imported history
+        if: steps.branch.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub's installation token cannot import workflow files from the
+          # other repositories. Rewrite only this standalone copy's history
+          # to omit .github/workflows/, preserving code and other history.
+          python -m pip install --quiet git-filter-repo
+          git -C imported filter-repo --force --path .github/workflows/ --invert-paths
+          if git -C imported ls-tree -r --name-only HEAD | grep -q '^.github/workflows/'; then
+            echo "::error::Upstream workflows were not fully removed."
+            exit 1
+          fi
+
       - name: Push imported source into dedicated branch
         if: steps.branch.outputs.exists == 'false'
         env:
@@ -93,8 +108,9 @@ jobs:
         run: |
           set -euo pipefail
           actual="$(git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${TARGET_BRANCH}" | cut -f1)"
-          if [[ "${actual}" != "${PINNED_COMMIT}" ]]; then
-            echo "::error::The imported branch does not match the selected upstream revision."
+          expected="$(git -C imported rev-parse HEAD)"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "::error::The imported branch does not match the prepared copy."
             exit 1
           fi
-          echo "Verified ${TARGET_BRANCH} = ${actual}"
+          echo "Verified ${TARGET_BRANCH} = ${actual} (upstream workflow files omitted)."
