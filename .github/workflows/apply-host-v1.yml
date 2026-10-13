@@ -1,0 +1,46 @@
+name: Apply Xbox One V1 changes to UWP host
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-host-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out editable UWP host
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/uwp-host
+          path: host
+          persist-credentials: true
+      - name: Check out V1 patch kit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: kit
+          persist-credentials: false
+      - name: Apply idempotent Xbox One patch
+        run: |
+          set -euo pipefail
+          python kit/patches/apply_v1.py --host host
+          git -C host diff --check
+          python kit/tests/test_patcher.py
+      - name: Commit Xbox One V1 host changes
+        run: |
+          set -euo pipefail
+          git -C host config user.name "github-actions[bot]"
+          git -C host config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C host add --             Common/DeviceResources.cpp             DirectXPage.xaml.cpp             Cemu-UWP-Host.vcxproj             Package.appxmanifest             XboxOneProbe.h
+          if git -C host diff --staged --quiet; then
+            echo "The UWP host branch already contains the V1 changes."
+            exit 0
+          fi
+          git -C host commit -m "Xbox One V1: D3D11 host FL10_1 and hardware D3D12 diagnostics"
+          git -C host push origin HEAD:refs/heads/xbox-one/uwp-host
