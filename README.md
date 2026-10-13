@@ -12,9 +12,19 @@
 
 Cemu for Xbox One explores bringing Wii U emulation to the original Xbox One through the Universal Windows Platform (UWP). The focus is on compatible graphics initialization, a controller-friendly experience, and performance work tailored to Xbox One hardware.
 
-This repository provides the Xbox One-specific **source patches, build scripts, and development tests**. It retrieves the required Cemu and UWP host source code during setup rather than duplicating those repositories.
+This project is organized as **separate editable source branches** in this repository. The `main` branch holds the documentation, build scripts, and development tests. The Cemu core, UWP host, and SDL3 UWP source trees live in their own branches, so each component can be modified independently.
 
-**Development status:** V1 Experimental. The source patches pass automated validation, but a working Xbox One application has **not** been compiled or tested on the console. Game compatibility and performance are not established. There is currently **no downloadable APPX release**.
+### Source branches
+
+| Branch | Purpose |
+| --- | --- |
+| [`xbox-one/cemu-core`](https://github.com/kuaan08/Cemu/tree/xbox-one/cemu-core) | Cemu Wii U emulation core and CPU/GPU backends |
+| [`xbox-one/uwp-host`](https://github.com/kuaan08/Cemu/tree/xbox-one/uwp-host) | Xbox UWP application and graphical interface |
+| [`xbox-one/sdl3-uwp`](https://github.com/kuaan08/Cemu/tree/xbox-one/sdl3-uwp) | SDL3 UWP platform integration |
+
+The branches are independent Git histories rather than directories within one branch. The upstream GitHub Actions workflow files were excluded from the Cemu and SDL3 imports because the repository's automation token cannot publish upstream workflows. Licenses, source files, commit authorship, and other project files were retained, but history rewriting changed their commit hashes.
+
+**Development status:** V1 Experimental. Source-patch validation is automated, but a working Xbox One application has **not** been compiled or tested on the console. Game compatibility and performance are not established. There is currently **no downloadable APPX release**.
 
 ## Current work
 
@@ -44,7 +54,7 @@ cd Cemu
 .\scripts\prepare.ps1 -Workspace C:\CemuXboxOneWorkspace
 ```
 
-The script checks out the modified Cemu core, Cemu UWP Host, and SDL3 UWP dependency, then applies the Xbox One changes to the host.
+The script checks out the three **`xbox-one/*` branches from this repository** into sibling folders, initializes Git submodules, and applies any V1 host changes not yet present. You can make and commit further changes directly in each checkout.
 
 ### Build the application
 
