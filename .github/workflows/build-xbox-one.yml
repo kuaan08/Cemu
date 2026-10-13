@@ -147,8 +147,20 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $env:GITHUB_WORKSPACE 'xbox-one-output'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $packages = @(Get-ChildItem 'Cemu-UWP-Host' -Recurse -File | Where-Object { $_.Extension -in @('.appx', '.appxbundle', '.msix', '.msixbundle') -and $_.FullName -notmatch '\\obj\\' })
-          if ($packages.Count -eq 0) { throw 'MSBuild produced no AppX/MSIX package' }
+
+          # Sign only the application package. Microsoft's x64/ARM64 framework
+          # dependency APPX files must retain their original signatures.
+          $packageRoot = Join-Path $env:GITHUB_WORKSPACE 'Cemu-UWP-Host/AppPackages'
+          if (!(Test-Path $packageRoot)) { throw 'MSBuild created no AppPackages directory' }
+          $packages = @(Get-ChildItem $packageRoot -Recurse -File | Where-Object {
+            $_.Name -match '_x64\.(msix|appx)$' -and
+            $_.FullName -notmatch '[\\/]Dependencies[\\/]'
+          })
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one x64 Cemu MSIX/APPX, found $($packages.Count): $($packages.FullName -join ', ')"
+          }
+          Write-Host "Selected Cemu package: $($packages[0].FullName)"
+
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Kuaan08' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -KeyUsage DigitalSignature
           if (!$cert) { throw 'Failed to create development signing certificate' }
           $secret = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
@@ -162,22 +174,40 @@ jobs:
             & $signTool sign /fd SHA256 /f $pfx /p $secret $package.FullName
             if ($LASTEXITCODE -ne 0) { throw "Signing failed: $($package.FullName)" }
             & $signTool verify /pa $package.FullName
-            if ($LASTEXITCODE -ne 0) { Write-Warning "Certificate trust may not be established on runner; signature was applied" }
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning 'The self-signed development certificate is not trusted by the GitHub runner. The package was signed; install its public certificate on the test device.'
+            }
             Copy-Item $package.FullName -Destination (Join-Path $out $package.Name)
           }
+
+          # Copy x64-only Microsoft redistributables without modifying them.
+          $dependencyPackages = @(Get-ChildItem $packageRoot -Recurse -File | Where-Object {
+            $_.FullName -match '[\\/]Dependencies[\\/]x64[\\/]' -and
+            $_.Name -match '\.(appx|msix)$'
+          })
+          if ($dependencyPackages.Count -gt 0) {
+            $depsOut = Join-Path $out 'Dependencies/x64'
+            New-Item -ItemType Directory -Force -Path $depsOut | Out-Null
+            foreach ($dependency in $dependencyPackages) {
+              Copy-Item $dependency.FullName -Destination $depsOut
+            }
+          }
+          Write-Host "Retained $($dependencyPackages.Count) x64 Microsoft dependency package(s)."
           @'
           Cemu for Xbox One V1 - Experimental test package
 
           1. Enable Developer Mode on the original Xbox One.
-          2. Install the included public .cer certificate if Xbox Device Portal requires it.
-          3. Upload/install the x64 APPX using Xbox Device Portal.
+          2. Install the public .cer certificate if Xbox Device Portal requires it.
+          3. Upload/install the x64 MSIX with x64 Dependencies if required.
           4. In Dev Home set the app's type to Game (not App).
-          5. Launch and capture diagnostics. This does NOT guarantee working Wii U games.
+          5. Launch and capture diagnostics. Wii U game compatibility is untested.
 
-          IMPORTANT: This is an independent self-signed development package.
-          Only its public .cer and signed package are included. No private key.
+          IMPORTANT: Independent self-signed development package.
+          Only its public .cer and signed application package are included.
+          The private signing key is NOT included.
+          Official Microsoft dependencies retain their own signatures.
           '@ | Set-Content -Path (Join-Path $out 'INSTALL.txt') -Encoding utf8
-          Write-Host "Packages: $($packages.Name -join ', ')"
+          Write-Host "Signed application: $($packages[0].Name)"
 
       - name: Upload signed Xbox One package
         if: success()
