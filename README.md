@@ -1,105 +1,103 @@
-# Cemu Xbox One — V1 hardware-probe port (UNTESTED)
+<div align="center">
+  <img src="https://raw.githubusercontent.com/cemu-project/Cemu/main/src/resource/logo_icon.png" alt="Cemu logo" width="104">
+  <h1>Cemu for Xbox One</h1>
+  <p>An experimental Wii U emulation project for the original Xbox One.</p>
+  <p>Built around <a href="https://github.com/cemu-project/Cemu">Cemu</a> and its community-developed <a href="https://github.com/rodrigoandrigo/Cemu-UWP-Host">UWP host</a>.</p>
+  <p><strong>Xbox One (2013) · x64 · Developer Mode</strong></p>
+</div>
 
-**Target:** Original Xbox One (2013), x64, Developer Mode, UWP configured as a **Game**. This repository is a small, reproducible **source patch kit** for the existing embedded Cemu UWP port; it does not contain Wii U game files, firmware, keys, proprietary assets, or a compiled Xbox application.
+---
 
-**Current milestone:** source preparation and hardware/renderer initialization diagnostics. **Not yet compiled or validated on real Xbox One hardware. No APK/APPX is included, and Wii U gameplay is not yet demonstrated.**
+## About the project
 
-## Repository layout and status
+Cemu for Xbox One explores bringing Wii U emulation to the original Xbox One through the Universal Windows Platform (UWP). The focus is on compatible graphics initialization, a controller-friendly experience, and performance work tailored to Xbox One hardware.
 
-This repository intentionally contains the Xbox One-specific patches and build scripts, **not a full copy of Cemu or the UWP host**. Run `scripts/prepare.ps1` on Windows to fetch pinned upstream source checkouts and apply the changes. The included GitHub Actions workflow validates Python syntax, patch anchors, and idempotence against the pinned upstream host; **it does not compile APPX or validate Xbox hardware**.
+This repository provides the Xbox One-specific **source patches, build scripts, and development tests**. It retrieves the required Cemu and UWP host source code during setup rather than duplicating those repositories.
 
-## Verified bases (2026-10-13)
+**Development status:** V1 Experimental. The source patches pass automated validation, but a working Xbox One application has **not** been compiled or tested on the console. Game compatibility and performance are not established. There is currently **no downloadable APPX release**.
 
-| Repository | Branch | Commit |
-| --- | --- | --- |
-| [rodrigoandrigo/Cemu-UWP-Host](https://github.com/rodrigoandrigo/Cemu-UWP-Host) | `main` | `7dbfb6aa8716593cf7caed3cbcd39b07aee58c2e` |
-| [rodrigoandrigo/Cemu](https://github.com/rodrigoandrigo/Cemu) | `build-msvc-d3d11` | `c70bca6f94c94dc7fc8e5bdda5e55d85c500f371` |
-| [rodrigoandrigo/SDL3_UWP](https://github.com/rodrigoandrigo/SDL3_UWP) | `main` | `37ee4ec4f4427e45dab91d1b40a5d075cb7ae255` |
+## Current work
 
-Host and runtime are separate repositories with different licenses (Apache-2.0 host, MPL-2.0 Cemu). Keep original upstream notices when making a fork.
+| Area | V1 implementation |
+| --- | --- |
+| **Xbox One graphics initialization** | Uses Direct3D 11 Feature Level 10.1 for the host presentation device, with a separate experimental Direct3D 12 rendering path in Cemu. |
+| **Hardware detection** | Checks for a non-software Direct3D 12 Feature Level 11.0 device before starting the emulator. |
+| **Renderer configuration** | Selects the experimental Direct3D 12 backend for this Xbox One build profile. |
+| **Platform-specific changes** | Isolates Xbox One modifications behind an x64 build definition, keeping the original UWP host behavior separate. |
+| **Build preparation** | Scripts obtain the required sources, apply the patches, and invoke the Windows UWP build tools. |
+| **Quality checks** | GitHub Actions tests patch syntax, application against the intended UWP host, and repeat application. |
 
-## Why V1 is necessary
+These are **development features**, not confirmation that Wii U games can run on Xbox One. Rendering, PowerPC recompilation, memory use, and long-session stability still require hardware testing.
 
-The current UWP host initializes a D3D11 hardware device with **only FL 11_0** allowed, before Cemu even starts. Xbox One UWP's D3D11 hardware path is **FL 10_1**, which blocks this initialization; the Xbox Series S does not have this restriction. The modified Cemu's D3D11 renderer *also* requires FL 11_0, so silently downgrading the renderer is not viable.
+## Building from source
 
-Xbox One UWP supports **D3D12 FL 11_0 only when running as a Game**. The upstream Cemu fork already has an **experimental** Vulkan-to-D3D12 translation layer. V1 uses this path, while retaining D3D11 FL10_1 **only for the host's presentation surface**.
+You need a Windows x64 development PC with Git, Python 3, CMake, the Windows SDK, and Visual Studio with MSVC and UWP C++ development tools. The build scripts currently target **Visual Studio 2026 (MSVC v145)** and **Windows SDK 10.0.26100.0**.
 
-## Changes actually applied by this kit
+### Prepare the project
 
-- `Common/DeviceResources.cpp`: under `CEMU_XBOX_ONE_V1`, request D3D11 FL10_1 for host presentation and reject WARP fallback; unmodified behavior on other profiles.
-- `DirectXPage.xaml.cpp`: on startup, probe a **hardware** (non-WARP) D3D12 FL11_0 adapter and display a diagnostic if unavailable; force Cemu's embedded graphics API ID `4` (the modified core's D3D12 enum) in both LoadSettings and SaveSettings; show the experimental D3D12 mode.
-- `Cemu-UWP-Host.vcxproj`: activate `CEMU_XBOX_ONE_V1` for **Debug x64 and Release x64** only.
-- `Package.appxmanifest`: change **display name** to identify the experimental Xbox One package; preserve signing identity to avoid certificate mismatch during first test.
-- `XboxOneProbe.h`: actual DXGI/D3D12 hardware capability probe, without software adapter fallbacks.
-
-**Important:** this kit does **not** rewrite Cemu's complex GPU shader translation, change the powerpc JIT, guarantee Cemu's internal Vulkan-over-D3D12 abstraction works, or solve game performance. It does not modify Series S memory policies, shader budgets, or disable Windows security mitigations. This is intentional: initial checks must come before performance hacks.
-
-## Install prerequisites
-
-On a Windows x64 development PC install **Visual Studio 18 2026**, the matching **MSVC v145** toolchain, **UWP C++ tooling**, **Windows SDK 10.0.26100.0**, **CMake 3.21.1+**, Python 3, and Git, per the upstream host README. Visual Studio's exact install path may differ. Run commands from Developer PowerShell for Visual Studio 18.
-
-## First use
+Clone this repository and run the preparation script from PowerShell:
 
 ```powershell
-# Extract this V1 kit; execute from any PowerShell working directory.
-# Prepare three sibling repositories and patch only the host.
-.\scripts\prepare.ps1 -Workspace C:\CemuXboxOneWorkspace
+git clone https://github.com/kuaan08/Cemu.git
+cd Cemu
 
-# Configure/build modified Cemu first, then package the patched host.
+.\scripts\prepare.ps1 -Workspace C:\CemuXboxOneWorkspace
+```
+
+The script checks out the modified Cemu core, Cemu UWP Host, and SDL3 UWP dependency, then applies the Xbox One changes to the host.
+
+### Build the application
+
+Open a **Developer PowerShell for Visual Studio** and run:
+
+```powershell
 .\scripts\build.ps1 -Workspace C:\CemuXboxOneWorkspace
 ```
 
-To apply manually to existing checkouts:
+The build attempts to compile Cemu for x64 and package the modified UWP host. If your Visual Studio installation differs from the default path, pass the appropriate `-MSBuild` argument. Build requirements and extra development notes are available in [the technical guide](docs/PLANO_PT-BR.md).
 
-```powershell
-python .\patches\apply_v1.py --host C:\Projects\Cemu-UWP-Host --dry-run
-python .\patches\apply_v1.py --host C:\Projects\Cemu-UWP-Host
-```
+**Note:** The automated workflow in [GitHub Actions](https://github.com/kuaan08/Cemu/actions/workflows/patch-validation.yml) validates the source patches only. It does not currently build or distribute an Xbox package.
 
-The patcher is idempotent, preserves common checkout line endings and UTF-8 BOM, validates anchors, and refuses to overwrite a different `XboxOneProbe.h` file. **Commit or back up your own edits before applying.** For troubleshooting, compare the resulting checkout against upstream using `git diff`.
+## Running on Xbox One
 
-### IMPORTANT: select Game mode on Xbox One
+The target is the **original Xbox One**, running in Developer Mode.
 
-1. Switch the original Xbox One to **Developer Mode** and deploy the **x64** package generated by Visual Studio (with an appropriate signing certificate).
-2. In **Dev Home**, highlight the app, open details, and set its **App type** to **Game**. Alternatively configure new development deployments as Game in Xbox Device Portal. Merely installing an APPX does not guarantee Game mode.
-3. Start the application. In App mode the D3D12 **hardware** probe is expected to fail; it must not silently switch to WARP.
-4. Capture any in-app error, Device Portal logs and `LocalState\log.txt`. Then test the first **legal Wii U homebrew ELF/RPX** only after the renderer initializes.
+1. Build and sign the x64 UWP package on Windows.
+2. Install the package through the Xbox developer deployment tools.
+3. In Xbox Dev Home, configure the installed application as **Game**, not App.
+4. Launch the application and inspect its diagnostics for the hardware Direct3D 12 check.
+5. Once initialization works, test a simple, legally obtained Wii U homebrew application before trying more demanding software.
 
-The source kit retains the upstream package's identity and publisher for this first compilation, **which may conflict with an upstream installation**. Change identity and create an appropriately matching development certificate for independent distributions; do not redistribute the upstream signing key.
+Game mode is important because the Xbox One's UWP graphics capabilities differ between application and game contexts. A successful Direct3D 12 detection check alone does not guarantee that the emulator will render correctly.
 
-## Tests and acceptance criteria
+## Development priorities
 
-| Check | Outcome before real hardware testing |
-| --- | --- |
-| Source patch anchors, Python syntax, and repeat apply | Locally testable |
-| Generated UWP x64 binary builds | Not performed here — Windows MSVC/UWP SDK required |
-| Can launch on Xbox One original in Game mode | Not yet validated |
-| Non-WARP D3D12 FL11_0 available | Probe added; Xbox result pending |
-| Host surface D3D11 FL10_1 initializes | Not yet validated |
-| Cemu embedded startup reaches READY | Not yet validated |
-| Wii U homebrew renders | Not yet validated |
-| Shader compatibility, RAM usage, FPS | Not yet validated |
+- **Graphics:** Validate Direct3D 12 device creation, presentation, shader translation, and GPU compatibility.
+- **CPU:** Review the PowerPC-to-x64 recompilation path for the Xbox One's AMD Jaguar instruction set.
+- **Memory:** Measure and control runtime memory usage within Xbox UWP Game limits.
+- **Input and usability:** Verify Xbox controller input and the embedded UI on real hardware.
+- **Compatibility:** Establish repeatable homebrew tests and document issues before making gameplay claims.
+- **Performance:** Profile frame timing, shader compilation, and CPU/GPU bottlenecks after basic operation is stable.
 
-### Known risks
+## Troubleshooting
 
-- **High:** the in-tree Vulkan-to-D3D12 backend is experimental and may assume features/resources that Xbox One cannot provide even at FL11_0. Feature-level equality is insufficient evidence of correct shader translation.
-- **High:** Xbox One's AMD Jaguar x64 lacks AVX2, BMI2, and FMA3. Validate *both generated JIT instructions* and compiled libraries before running games. Do not enable `/arch:AVX2` globally.
-- **Medium:** the host still creates a separate D3D11 swap chain before the D3D12 backend creates or attaches its own. The handoff and lifetime require device testing.
-- **Medium:** memory limits are strict (~5 GiB only for UWP Game); Series S-specific shader-cache and memory pressure optimizations require profiling on Xbox One.
-- **Medium:** actual Xbox One UWP runtime capabilities, JIT permissions, and module initialization may block progress independently of D3D12.
+**The application cannot initialize graphics.** Confirm it is configured as **Game** in Developer Mode. The V1 diagnostics distinguish missing hardware Direct3D 12 support from later emulator initialization failures.
 
-## Next milestone (V2)
+**The Windows build fails.** Check the installed Visual Studio toolset, UWP components, SDK, and availability of the required Cemu libraries. See the build output for the failing dependency or target.
 
-Use observed logs to determine which device/surface/shader/compiler stage fails first. Only then add a targeted GPU compatibility fix. If initialization reaches READY, test simple homebrew, measure RAM/frametime, and start title-by-title compatibility tracking.
+**The emulator opens but a title does not launch.** This is an experimental port. Gather logs before changing renderer options or disabling safety checks. A game launching on a PC or Xbox Series console does not establish Xbox One compatibility.
 
-## Licensing and content
+**A patch cannot be applied.** Use the pinned source revisions downloaded by `prepare.ps1`. If you modified those files yourself, back up your changes and inspect the reported mismatch before applying anything manually.
 
-Cemu UWP Host copyright remains with upstream contributors (Apache License 2.0). Cemu source and modifications remain under Mozilla Public License 2.0, including any MPL-covered files you distribute. Third-party dependencies retain their terms. This patch kit contains original glue code and no console title keys, games, Nintendo firmware or console secrets.
+## Credits and licenses
 
-## Sources
+This project builds on the work of the [Cemu development team](https://github.com/cemu-project/Cemu) and its contributors, the [Cemu UWP Host project](https://github.com/rodrigoandrigo/Cemu-UWP-Host), the [modified Cemu runtime](https://github.com/rodrigoandrigo/Cemu), and [SDL3 UWP](https://github.com/rodrigoandrigo/SDL3_UWP).
 
-- Host: https://github.com/rodrigoandrigo/Cemu-UWP-Host
-- Modified core: https://github.com/rodrigoandrigo/Cemu
-- SDL3 UWP: https://github.com/rodrigoandrigo/SDL3_UWP
-- Xbox UWP resources: https://learn.microsoft.com/en-us/windows/uwp/xbox-apps/system-resource-allocation
-- Xbox One UWP DirectX notes: https://walbourn.github.io/directx-and-uwp-on-xbox-one/
+- **Xbox One adaptation:** [kuaan08](https://github.com/kuaan08).
+- **Cemu emulator:** Mozilla Public License 2.0; original copyright and license obligations remain applicable.
+- **Cemu UWP Host:** Apache License 2.0; preserve original license and attribution notices.
+- **Dependencies:** Third-party components remain subject to their respective licenses.
+
+This repository does not provide commercial games, Nintendo firmware, console keys, or proprietary content. Use software and game backups you are legally entitled to use.
+
+This is an independent community project and is not affiliated with or endorsed by Nintendo or Microsoft.
