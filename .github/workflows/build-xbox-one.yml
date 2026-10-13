@@ -59,11 +59,22 @@ jobs:
             if (!(Test-Path $p)) { throw "Missing required file: $p" }
           }
 
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-xboxone-windows-v1-${{ hashFiles('Cemu/cmake/vcpkg-embed/vcpkg.json', 'Cemu/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-xboxone-windows-v1-
+
       - name: Configure Cemu runtime x64
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $sdl = (Resolve-Path 'SDL3-uwp').Path
+          $env:VCPKG_DEFAULT_BINARY_CACHE = Join-Path $env:GITHUB_WORKSPACE 'vcpkg-binary-cache'
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:VCPKG_DEFAULT_BINARY_CACHE" >> $env:GITHUB_ENV
           cmake -S Cemu -B Cemu/build-xbox-one -G 'Visual Studio 18 2026' -A x64 -DCEMU_UWP=ON -DENABLE_D3D11=ON -DENABLE_D3D12=ON "-DSDL3_UWP_SOURCE_DIR=$sdl"
           if ($LASTEXITCODE -ne 0) { throw "Cemu CMake configure failed (exit $LASTEXITCODE)" }
 
