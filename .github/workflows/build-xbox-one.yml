@@ -167,7 +167,15 @@ jobs:
           $secure = ConvertTo-SecureString $secret -AsPlainText -Force
           $pfx = Join-Path $env:RUNNER_TEMP 'XboxOneSigningKey.pfx'
           Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $secure | Out-Null
-          Export-Certificate -Cert $cert -FilePath (Join-Path $out 'Kuaan08-XboxOne-DevCertificate.cer') | Out-Null
+          $publicCert = Join-Path $out 'Kuaan08-XboxOne-DevCertificate.cer'
+          Export-Certificate -Cert $cert -FilePath $publicCert | Out-Null
+          # Self-signed certificates are not trusted by default. Trust only on
+          # this disposable GitHub runner so SignTool /pa can validate the
+          # signature; the public .cer remains available for console testing.
+          $trusted = Import-Certificate -FilePath $publicCert -CertStoreLocation 'Cert:\CurrentUser\Root'
+          if (!$trusted -or $trusted.Thumbprint -ne $cert.Thumbprint) {
+            throw 'Failed to trust the temporary development signing certificate on the runner.'
+          }
           $signTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe'
           if (!(Test-Path $signTool)) { throw "SignTool not found: $signTool" }
           foreach ($package in $packages) {
@@ -175,8 +183,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Signing failed: $($package.FullName)" }
             & $signTool verify /pa $package.FullName
             if ($LASTEXITCODE -ne 0) {
-              Write-Warning 'The self-signed development certificate is not trusted by the GitHub runner. The package was signed; install its public certificate on the test device.'
+              throw "SignTool verification failed for $($package.FullName) (exit $LASTEXITCODE)."
             }
+            Write-Host "Verified signature on $($package.Name)"
             Copy-Item $package.FullName -Destination (Join-Path $out $package.Name)
           }
 
@@ -208,6 +217,8 @@ jobs:
           Official Microsoft dependencies retain their own signatures.
           '@ | Set-Content -Path (Join-Path $out 'INSTALL.txt') -Encoding utf8
           Write-Host "Signed application: $($packages[0].Name)"
+          # The step must not inherit a nonzero native-tool exit status.
+          $global:LASTEXITCODE = 0
 
       - name: Upload signed Xbox One package
         if: success()
