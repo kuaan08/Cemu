@@ -58,6 +58,17 @@ jobs:
             throw 'Outdated ZArchive submodule: expected OpenFromStream. Check xbox-one/cemu-core submodule pointer and recursive checkout.'
           }
           Write-Host 'Verified ZArchive exposes OpenFromStream.'
+          $hostHeader = Get-Content 'Cemu-UWP-Host/Cemu_UWP_HostMain.h' -Raw
+          $hostSource = Get-Content 'Cemu-UWP-Host/Cemu_UWP_HostMain.cpp' -Raw
+          $deviceHeader = Get-Content 'Cemu-UWP-Host/Common/DeviceResources.h' -Raw
+          $deviceSource = Get-Content 'Cemu-UWP-Host/Common/DeviceResources.cpp' -Raw
+          if (!$hostHeader.Contains('void ReplaceD3D11Surface(') -or !$hostSource.Contains('void Cemu_UWP_HostMain::ReplaceD3D11Surface(')) {
+            throw 'UWP host surface replacement declaration and implementation are inconsistent.'
+          }
+          if (!$deviceHeader.Contains('void DetachSwapChainPanel();') -or !$deviceSource.Contains('void DX::DeviceResources::DetachSwapChainPanel()')) {
+            throw 'DeviceResources swapchain detachment declaration and implementation are inconsistent.'
+          }
+          Write-Host 'Verified UWP host surface and swapchain APIs.'
           foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
                           'SDL3-uwp\CMakeLists.txt',
                           'Cemu-UWP-Host\XboxOneProbe.h')) {
