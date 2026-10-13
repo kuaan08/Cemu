@@ -1,0 +1,163 @@
+name: Cemu Xbox One - Build UWP x64
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-xbox-one.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-x64:
+    name: Build experimental Xbox One APPX
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout build tooling
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: kit
+
+      - name: Checkout Cemu core
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/cemu-core
+          path: Cemu
+          submodules: recursive
+
+      - name: Checkout patched UWP host
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/uwp-host
+          path: Cemu-UWP-Host
+
+      - name: Checkout SDL3 UWP
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/sdl3-uwp
+          path: SDL3-uwp
+
+      - name: Show Windows C++ tooling and check source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = (& $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -property installationPath | Select-Object -First 1)
+          if (!$vs) { throw 'Visual Studio with MSBuild is unavailable on runner' }
+          "VS=$vs" >> $env:GITHUB_ENV
+          Write-Host "Visual Studio: $vs"
+          Get-ChildItem 'Cemu\dependencies' -Force | Select-Object -First 15 Name
+          foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
+                          'SDL3-uwp\CMakeLists.txt',
+                          'Cemu-UWP-Host\XboxOneProbe.h')) {
+            if (!(Test-Path $p)) { throw "Missing required file: $p" }
+          }
+
+      - name: Configure Cemu runtime x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdl = (Resolve-Path 'SDL3-uwp').Path
+          cmake -S Cemu -B Cemu/build-xbox-one -G 'Visual Studio 18 2026' -A x64 -DCEMU_UWP=ON -DENABLE_D3D11=ON -DENABLE_D3D12=ON "-DSDL3_UWP_SOURCE_DIR=$sdl"
+          if ($LASTEXITCODE -ne 0) { throw "Cemu CMake configure failed (exit $LASTEXITCODE)" }
+
+      - name: Compile embedded Cemu runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build Cemu/build-xbox-one --config Release --target CemuBin --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Cemu runtime build failed (exit $LASTEXITCODE)" }
+          foreach ($name in @('Cemu_release.dll', 'Cemu_release.lib')) {
+            if (!(Test-Path (Join-Path 'Cemu/bin' $name))) { throw "Missing runtime output: $name" }
+          }
+
+      - name: Prepare independent Xbox One test package identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = 'Cemu-UWP-Host/Package.appxmanifest'
+          $xml = Get-Content $manifest -Raw
+          $xml = $xml.Replace('Name="9603d93f-a7c7-491d-9d0b-1a0930897231"', 'Name="kuaan08.CemuXboxOneV1"')
+          $xml = $xml.Replace('Publisher="CN=rodri"', 'Publisher="CN=Kuaan08"')
+          $xml = $xml.Replace('Version="1.0.10.0"', 'Version="1.0.0.0"')
+          Set-Content -Path $manifest -Value $xml -Encoding utf8
+          [xml]$validated = Get-Content $manifest
+          $identity = $validated.Package.Identity
+          Write-Host "Package identity: $($identity.Name), publisher: $($identity.Publisher)"
+          if ($identity.Publisher -ne 'CN=Kuaan08') { throw 'Unexpected package publisher' }
+
+      - name: Compile and package x64 UWP host (unsigned)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msbuild = Join-Path $env:VS 'MSBuild\Current\Bin\MSBuild.exe'
+          if (!(Test-Path $msbuild)) { throw "MSBuild missing: $msbuild" }
+          & $msbuild 'Cemu-UWP-Host/Cemu-UWP-Host.vcxproj' /restore /m:2 /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false /p:AppxBundle=Never /p:GenerateAppInstallerFile=false /p:UapAppxPackageBuildMode=SideloadOnly /verbosity:minimal
+          if ($LASTEXITCODE -ne 0) { throw "UWP host MSBuild failed (exit $LASTEXITCODE)" }
+
+      - name: Sign package for developer testing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'xbox-one-output'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $packages = @(Get-ChildItem 'Cemu-UWP-Host' -Recurse -File | Where-Object { $_.Extension -in @('.appx', '.appxbundle', '.msix', '.msixbundle') -and $_.FullName -notmatch '\\obj\\' })
+          if ($packages.Count -eq 0) { throw 'MSBuild produced no AppX/MSIX package' }
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Kuaan08' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -KeyUsage DigitalSignature
+          if (!$cert) { throw 'Failed to create development signing certificate' }
+          $secret = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
+          $secure = ConvertTo-SecureString $secret -AsPlainText -Force
+          $pfx = Join-Path $env:RUNNER_TEMP 'XboxOneSigningKey.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $secure | Out-Null
+          Export-Certificate -Cert $cert -FilePath (Join-Path $out 'Kuaan08-XboxOne-DevCertificate.cer') | Out-Null
+          $signTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe'
+          if (!(Test-Path $signTool)) { throw "SignTool not found: $signTool" }
+          foreach ($package in $packages) {
+            & $signTool sign /fd SHA256 /f $pfx /p $secret $package.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed: $($package.FullName)" }
+            & $signTool verify /pa $package.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Warning "Certificate trust may not be established on runner; signature was applied" }
+            Copy-Item $package.FullName -Destination (Join-Path $out $package.Name)
+          }
+          @'
+          Cemu for Xbox One V1 - Experimental test package
+
+          1. Enable Developer Mode on the original Xbox One.
+          2. Install the included public .cer certificate if Xbox Device Portal requires it.
+          3. Upload/install the x64 APPX using Xbox Device Portal.
+          4. In Dev Home set the app's type to Game (not App).
+          5. Launch and capture diagnostics. This does NOT guarantee working Wii U games.
+
+          IMPORTANT: This is an independent self-signed development package.
+          Only its public .cer and signed package are included. No private key.
+          '@ | Set-Content -Path (Join-Path $out 'INSTALL.txt') -Encoding utf8
+          Write-Host "Packages: $($packages.Name -join ', ')"
+
+      - name: Upload signed Xbox One package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cemu-XboxOne-V1-UWP-x64-TEST
+          path: xbox-one-output/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload troubleshooting logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cemu-XboxOne-V1-build-logs
+          path: |
+            Cemu/build-xbox-one/CMakeCache.txt
+            Cemu/build-xbox-one/CMakeFiles/CMakeConfigureLog.yaml
+            Cemu/build-xbox-one/vcpkg_installed/vcpkg/issue_body.md
+            Cemu/build-xbox-one/vcpkg_installed/vcpkg/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
