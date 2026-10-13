@@ -1,8 +1,12 @@
 # Cemu Xbox One — V1 hardware-probe port (UNTESTED)
 
-**Target:** Original Xbox One (2013), x64, Developer Mode, UWP configured as a **Game**. This package is a small, reproducible **source patch kit** for the existing embedded Cemu UWP port; it does not contain Wii U game files, firmware, keys, proprietary assets, or a compiled Xbox application.
+**Target:** Original Xbox One (2013), x64, Developer Mode, UWP configured as a **Game**. This repository is a small, reproducible **source patch kit** for the existing embedded Cemu UWP port; it does not contain Wii U game files, firmware, keys, proprietary assets, or a compiled Xbox application.
 
 **Current milestone:** source preparation and hardware/renderer initialization diagnostics. **Not yet compiled or validated on real Xbox One hardware. No APK/APPX is included, and Wii U gameplay is not yet demonstrated.**
+
+## Repository layout and status
+
+This repository intentionally contains the Xbox One-specific patches and build scripts, **not a full copy of Cemu or the UWP host**. Run `scripts/prepare.ps1` on Windows to fetch pinned upstream source checkouts and apply the changes. The included GitHub Actions workflow validates Python syntax, patch anchors, and idempotence against the pinned upstream host; **it does not compile APPX or validate Xbox hardware**.
 
 ## Verified bases (2026-10-13)
 
@@ -10,7 +14,7 @@
 | --- | --- | --- |
 | [rodrigoandrigo/Cemu-UWP-Host](https://github.com/rodrigoandrigo/Cemu-UWP-Host) | `main` | `7dbfb6aa8716593cf7caed3cbcd39b07aee58c2e` |
 | [rodrigoandrigo/Cemu](https://github.com/rodrigoandrigo/Cemu) | `build-msvc-d3d11` | `c70bca6f94c94dc7fc8e5bdda5e55d85c500f371` |
-| [rodrigoandrigo/SDL3_UWP](https://github.com/rodrigoandrigo/SDL3_UWP) | see source README | not pinned |
+| [rodrigoandrigo/SDL3_UWP](https://github.com/rodrigoandrigo/SDL3_UWP) | `main` | `37ee4ec4f4427e45dab91d1b40a5d075cb7ae255` |
 
 Host and runtime are separate repositories with different licenses (Apache-2.0 host, MPL-2.0 Cemu). Keep original upstream notices when making a fork.
 
