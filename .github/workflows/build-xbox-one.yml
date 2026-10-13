@@ -53,6 +53,11 @@ jobs:
           "VS=$vs" >> $env:GITHUB_ENV
           Write-Host "Visual Studio: $vs"
           Get-ChildItem 'Cemu\dependencies' -Force | Select-Object -First 15 Name
+          $zarchive = Get-Content 'Cemu/dependencies/ZArchive/include/zarchive/zarchivereader.h' -Raw
+          if (!$zarchive.Contains('OpenFromStream')) {
+            throw 'Outdated ZArchive submodule: expected OpenFromStream. Check xbox-one/cemu-core submodule pointer and recursive checkout.'
+          }
+          Write-Host 'Verified ZArchive exposes OpenFromStream.'
           foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
                           'SDL3-uwp\CMakeLists.txt',
                           'Cemu-UWP-Host\XboxOneProbe.h')) {
