@@ -1,0 +1,14 @@
+# Local emulator source checkouts and build products
+CemuXboxOneWorkspace/
+build/
+build-*/
+AppPackages/
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+*.pfx
+__pycache__/
+*.py[cod]
+.DS_Store
+.vs/

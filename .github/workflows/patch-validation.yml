@@ -1,0 +1,31 @@
+name: Xbox One V1 source-patch validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python syntax and unit tests
+        run: |
+          python -m py_compile patches/apply_v1.py
+          python tests/test_patcher.py
+      - name: Check V1 patch against pinned Cemu UWP Host
+        run: |
+          git clone --quiet https://github.com/rodrigoandrigo/Cemu-UWP-Host.git /tmp/Cemu-UWP-Host
+          git -C /tmp/Cemu-UWP-Host checkout --detach 7dbfb6aa8716593cf7caed3cbcd39b07aee58c2e
+          python patches/apply_v1.py --host /tmp/Cemu-UWP-Host --dry-run
+          python patches/apply_v1.py --host /tmp/Cemu-UWP-Host
+          python patches/apply_v1.py --host /tmp/Cemu-UWP-Host
+          git -C /tmp/Cemu-UWP-Host diff --check
+# This workflow checks patches only: it does not build a UWP package.
