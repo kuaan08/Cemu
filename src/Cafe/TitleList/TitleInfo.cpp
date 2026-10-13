@@ -11,16 +11,125 @@
 #include "config/ActiveSettings.h"
 #include "util/helpers/helpers.h"
 
+// ZArchive's pinned API accepts std::istream, not OpenFromCallbacks.
+// Adapt host-brokered random-access files to a buffered seekable stream so
+// WUA parsing can still read directly from external UWP storage.
+#include <array>
+#include <cstdint>
+#include <istream>
+#include <memory>
+#include <streambuf>
+#include <limits>
+
+namespace
+{
+class VirtualFileStreamBuf final : public std::streambuf
+{
+public:
+	explicit VirtualFileStreamBuf(std::unique_ptr<VirtualFile::Stream> stream)
+		: m_stream(std::move(stream))
+	{
+		setg(m_buffer.data(), m_buffer.data(), m_buffer.data());
+	}
+
+protected:
+	int_type underflow() override
+	{
+		if (gptr() < egptr())
+			return traits_type::to_int_type(*gptr());
+		const uint64_t offset = CurrentOffset();
+		if (offset >= m_stream->GetSize())
+			return traits_type::eof();
+		const auto amount = static_cast<uint32_t>((std::min)(
+			static_cast<uint64_t>(m_buffer.size()), m_stream->GetSize() - offset));
+		const uint32_t read = m_stream->Read(offset, m_buffer.data(), amount);
+		if (read == 0 || read > amount)
+			return traits_type::eof();
+		m_bufferOffset = offset;
+		setg(m_buffer.data(), m_buffer.data(), m_buffer.data() + read);
+		return traits_type::to_int_type(*gptr());
+	}
+
+	pos_type seekoff(off_type distance, std::ios_base::seekdir direction,
+		std::ios_base::openmode mode) override
+	{
+		if (!(mode & std::ios_base::in))
+			return pos_type(off_type(-1));
+		uint64_t base = 0;
+		switch (direction)
+		{
+		case std::ios_base::beg:
+			break;
+		case std::ios_base::cur:
+			base = CurrentOffset();
+			break;
+		case std::ios_base::end:
+			base = m_stream->GetSize();
+			break;
+		default:
+			return pos_type(off_type(-1));
+		}
+		uint64_t target;
+		if (distance >= 0)
+		{
+			const auto delta = static_cast<uint64_t>(distance);
+			if (base > m_stream->GetSize() ||
+				delta > m_stream->GetSize() - base)
+				return pos_type(off_type(-1));
+			target = base + delta;
+		}
+		else
+		{
+			// Avoid negating the minimum signed value (undefined behavior).
+			const auto delta = static_cast<uint64_t>(-(distance + 1)) + 1;
+			if (delta > base)
+				return pos_type(off_type(-1));
+			target = base - delta;
+		}
+		if (target > static_cast<uint64_t>((std::numeric_limits<off_type>::max)()))
+			return pos_type(off_type(-1));
+		m_bufferOffset = target;
+		setg(m_buffer.data(), m_buffer.data(), m_buffer.data());
+		return pos_type(static_cast<off_type>(target));
+	}
+
+	pos_type seekpos(pos_type position, std::ios_base::openmode mode) override
+	{
+		return seekoff(static_cast<off_type>(position), std::ios_base::beg, mode);
+	}
+
+private:
+	uint64_t CurrentOffset() const
+	{
+		return m_bufferOffset + static_cast<uint64_t>(gptr() - eback());
+	}
+
+	std::unique_ptr<VirtualFile::Stream> m_stream;
+	std::array<char, 64 * 1024> m_buffer{};
+	uint64_t m_bufferOffset{};
+};
+
+class VirtualFileIStream final : public std::istream
+{
+public:
+	explicit VirtualFileIStream(std::unique_ptr<VirtualFile::Stream> stream)
+		: std::istream(nullptr), m_buffer(std::move(stream))
+	{
+		rdbuf(&m_buffer);
+	}
+
+private:
+	VirtualFileStreamBuf m_buffer;
+};
+}
+
 ZArchiveReader* OpenZArchiveFile(const fs::path& path)
 {
 	auto virtualStream = VirtualFile::Open(path);
 	if (!virtualStream)
 		return ZArchiveReader::OpenFromFile(path);
-	auto sharedStream = std::shared_ptr<VirtualFile::Stream>(std::move(virtualStream));
-	return ZArchiveReader::OpenFromCallbacks(sharedStream->GetSize(),
-		[sharedStream](uint64_t offset, void* buffer, uint32_t size) {
-			return sharedStream->Read(offset, buffer, size) == size;
-		});
+	return ZArchiveReader::OpenFromStream(
+		std::make_unique<VirtualFileIStream>(std::move(virtualStream)));
 }
 
 // detect format by reading file header/footer
