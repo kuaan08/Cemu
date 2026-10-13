@@ -557,6 +557,27 @@ void DX::DeviceResources::SetSwapChainPanel(SwapChainPanel^ panel)
 	CreateWindowSizeDependentResources();
 }
 
+// Clear the XAML composition target before discarding its DXGI resources.
+// ShutdownRuntime calls this after the embedded renderer is stopped.
+void DX::DeviceResources::DetachSwapChainPanel()
+{
+	if (!m_swapChainPanel)
+		return;
+
+	// This method is called from the XAML UI thread in ShutdownRuntime.
+	Microsoft::WRL::ComPtr<ISwapChainPanelNative> panelNative;
+	if (SUCCEEDED(reinterpret_cast<IUnknown*>(m_swapChainPanel)->QueryInterface(
+		IID_PPV_ARGS(&panelNative))))
+	{
+		DX::ThrowIfFailed(panelNative->SetSwapChain(nullptr));
+	}
+
+	if (m_externalRenderer && m_d3dContext)
+		ReleaseSizeDependentResourcesForExternalRenderer();
+	m_swapChain = nullptr;
+	m_swapChainPanel = nullptr;
+}
+
 void DX::DeviceResources::ReleaseSizeDependentResourcesForExternalRenderer()
 {
 	// The embedded Cemu renderer owns presentation and ResizeBuffers after the
