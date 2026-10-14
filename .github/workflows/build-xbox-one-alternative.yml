@@ -80,6 +80,12 @@ jobs:
             throw 'Xbox One-specific D3D12 override is missing from Cemu runtime sources.'
           }
           Write-Host 'Verified Xbox One D3D12 runtime selection.'
+          $startSource = Get-Content 'Cemu/src/main.cpp' -Raw
+          if (!$startSource.Contains('xbox-one-startup.txt') -or
+              !$startSource.Contains('11 D3D12 renderer constructed successfully')) {
+            throw 'Missing crash-resistant startup tracing for Xbox One V3.'
+          }
+          Write-Host 'Verified V3 local startup breadcrumbs.'
           foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
                           'SDL3-uwp\CMakeLists.txt',
                           'Cemu-UWP-Host\XboxOneProbe.h')) {
@@ -215,7 +221,7 @@ jobs:
             }
           }
           @'
-          Cemu Xbox One V2 - D3D12 renderer fix (EXPERIMENTAL)
+          Cemu Xbox One V3 - D3D12 startup diagnostics (EXPERIMENTAL)
 
           The x64 MSIX was signed using a temporary self-signed developer certificate.
           The GitHub runner DOES NOT trust this certificate and it has NOT been installed
@@ -238,7 +244,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Cemu-XboxOne-V2-D3D12-x64-ALT-SIGNED
+          name: Cemu-XboxOne-V3-D3D12-DIAGNOSTIC-x64-SIGNED
           path: xbox-one-output/*
           if-no-files-found: error
           retention-days: 14
