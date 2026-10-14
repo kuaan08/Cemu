@@ -86,6 +86,13 @@ jobs:
             throw 'Missing crash-resistant startup tracing for Xbox One V3.'
           }
           Write-Host 'Verified V3 local startup breadcrumbs.'
+          $gpuSource = Get-Content 'Cemu/src/Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.cpp' -Raw
+          if (!$gpuSource.Contains('xbox-one-gpu-startup.txt') -or
+              !$gpuSource.Contains('V4.20 Vulkan renderer constructor complete') -or
+              !$gpuSource.Contains('unable to map uniform variable buffer')) {
+            throw 'Missing V4 D3D12 breadcrumbs or safe buffer mapping checks.'
+          }
+          Write-Host 'Verified Xbox One V4 detailed GPU startup tracing.'
           foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
                           'SDL3-uwp\CMakeLists.txt',
                           'Cemu-UWP-Host\XboxOneProbe.h')) {
@@ -221,7 +228,7 @@ jobs:
             }
           }
           @'
-          Cemu Xbox One V3 - D3D12 startup diagnostics (EXPERIMENTAL)
+          Cemu Xbox One V4 - detailed D3D12 startup diagnostics (EXPERIMENTAL)
 
           The x64 MSIX was signed using a temporary self-signed developer certificate.
           The GitHub runner DOES NOT trust this certificate and it has NOT been installed
@@ -231,7 +238,7 @@ jobs:
           2. Install/trust the supplied public .cer on the test device where supported.
           3. Deploy the x64 MSIX and any x64 Dependencies using Xbox Device Portal.
           4. Set the application type to Game and launch.
-          5. After any crash, open Xbox Device Portal > File Explorer > LocalAppData > Cemu > LocalState. Download xbox-one-startup.txt and log.txt if present.
+          5. After any crash, open Xbox Device Portal > File Explorer > LocalAppData > Cemu > LocalState. Download xbox-one-gpu-startup.txt, xbox-one-startup.txt and log.txt.
           6. The D3D12 backend is experimental; Wii U game functionality remains untested.
 
           The signing private key/PFX is NOT included.
@@ -245,7 +252,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Cemu-XboxOne-V3-D3D12-DIAGNOSTIC-x64-SIGNED
+          name: Cemu-XboxOne-V4-D3D12-STARTUP-DIAGNOSTIC-x64-SIGNED
           path: xbox-one-output/*
           if-no-files-found: error
           retention-days: 14
