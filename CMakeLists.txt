@@ -4,6 +4,10 @@ option(ENABLE_VCPKG "Enable the vcpkg package manager" ON)
 option(MACOS_BUNDLE "The executable when built on macOS will be created as an application bundle" OFF)
 option(ALLOW_PORTABLE "Allow Cemu to be run in portable mode" ON)
 option(CEMU_UWP "Build a DLL compatible with a UWP host" OFF)
+option(CEMU_XBOX_ONE_V1 "Force the experimental D3D12 backend for original Xbox One builds" OFF)
+if(CEMU_XBOX_ONE_V1 AND NOT CEMU_UWP)
+	message(FATAL_ERROR "CEMU_XBOX_ONE_V1 requires CEMU_UWP=ON")
+endif()
 set(SDL3_UWP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../SDL3-uwp" CACHE PATH
 	"SDL3 source tree that provides the Windows.Gaming.Input backend for CEMU_UWP")
 
@@ -226,6 +230,11 @@ if(CEMU_UWP)
 	set(ENABLE_D3D11 ON CACHE BOOL "" FORCE)
 	set(ENABLE_D3D12 ON CACHE BOOL "" FORCE)
 	add_compile_definitions(CEMU_UWP)
+endif()
+
+if(CEMU_XBOX_ONE_V1)
+	add_compile_definitions(CEMU_XBOX_ONE_V1)
+	message(STATUS "Xbox One V1: D3D12 embedded renderer required")
 endif()
 
 find_package(Threads REQUIRED)
