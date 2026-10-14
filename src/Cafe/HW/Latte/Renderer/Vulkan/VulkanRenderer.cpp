@@ -29,11 +29,31 @@
 #include "Cafe/HW/Latte/Core/LatteTiming.h" // vsync control
 
 #include <cstdint>
+#if defined(CEMU_XBOX_ONE_V1)
+#include <fstream>
+#endif
 #include <glslang/Public/ShaderLang.h>
 
 #ifndef VK_API_VERSION_MAJOR
 #define VK_API_VERSION_MAJOR(version) (((uint32_t)(version) >> 22) & 0x7FU)
 #define VK_API_VERSION_MINOR(version) (((uint32_t)(version) >> 12) & 0x3FFU)
+#endif
+
+// Crash-resistant checkpoints for the original Xbox One D3D12 bring-up.
+// Flush each line; an Xbox UWP native crash may prevent log.txt from flushing.
+#if defined(CEMU_XBOX_ONE_V1)
+static void XboxD3D12StartupTrace(const std::string& stage) noexcept
+{
+    try
+    {
+        std::ofstream out(ActiveSettings::GetUserDataPath("xbox-one-gpu-startup.txt"), std::ios::app);
+        if (out) { out << stage << '\n'; out.flush(); }
+    }
+    catch (...) {}
+}
+#define XBOX_D3D12_TRACE(stage) XboxD3D12StartupTrace(stage)
+#else
+#define XBOX_D3D12_TRACE(stage) ((void)0)
 #endif
 
 extern std::atomic_int g_compiling_pipelines;
@@ -799,12 +819,19 @@ VulkanRenderer::VulkanRenderer(RendererAPI api) : Renderer(api)
 	m_state.currentScissorRect.extent.width = 4;
 	m_state.currentScissorRect.extent.height = 4;
 
+	XBOX_D3D12_TRACE("V4.01 QueryMemoryInfo start");
 	QueryMemoryInfo();
+	XBOX_D3D12_TRACE("V4.02 QueryMemoryInfo OK, QueryAvailableFormats start");
 	QueryAvailableFormats();
+	XBOX_D3D12_TRACE("V4.03 QueryAvailableFormats OK, CreateCommandPool start");
 	CreateCommandPool();
+	XBOX_D3D12_TRACE("V4.04 CreateCommandPool OK, CreateCommandBuffers start");
 	CreateCommandBuffers();
+	XBOX_D3D12_TRACE("V4.05 CreateCommandBuffers OK, CreateDescriptorPool start");
 	CreateDescriptorPool();
+	XBOX_D3D12_TRACE("V4.06 CreateDescriptorPool OK, swapchain layout start");
 	swapchain_createDescriptorSetLayout();
+	XBOX_D3D12_TRACE("V4.07 swapchain descriptor layout OK");
 
 	// extension info
 	// cemuLog_log(LogType::Force, "VK_KHR_dynamic_rendering: {}", m_featureControl.deviceExtensions.dynamic_rendering?"supported":"not supported");
@@ -812,6 +839,7 @@ VulkanRenderer::VulkanRenderer(RendererAPI api) : Renderer(api)
 	void* bufferPtr;
 	// init ringbuffer for uniform vars
 	m_uniformVarBufferMemoryIsCoherent = false;
+	XBOX_D3D12_TRACE("V4.08 Creating uniform variable buffer");
 	if (memoryManager->CreateBuffer(UNIFORMVAR_RINGBUFFER_SIZE, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, m_uniformVarBuffer, m_uniformVarBufferMemory))
 		m_uniformVarBufferMemoryIsCoherent = true;
 	else if (memoryManager->CreateBuffer(UNIFORMVAR_RINGBUFFER_SIZE, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_uniformVarBuffer, m_uniformVarBufferMemory))
@@ -827,38 +855,53 @@ VulkanRenderer::VulkanRenderer(RendererAPI api) : Renderer(api)
 
 	if (!m_uniformVarBufferMemoryIsCoherent)
 		cemuLog_log(LogType::Force, "[Vulkan-Info] Using non-coherent memory for uniform data");
+	XBOX_D3D12_TRACE("V4.09 Mapping uniform variable buffer");
 	bufferPtr = nullptr;
-	vkMapMemory(m_logicalDevice, m_uniformVarBufferMemory, 0, VK_WHOLE_SIZE, 0, &bufferPtr);
+	if (!m_uniformVarBufferMemory || vkMapMemory(m_logicalDevice, m_uniformVarBufferMemory, 0, VK_WHOLE_SIZE, 0, &bufferPtr) != VK_SUCCESS || !bufferPtr)
+		throw std::runtime_error("Xbox One D3D12: unable to map uniform variable buffer");
+	XBOX_D3D12_TRACE("V4.10 Uniform buffer mapped");
 	m_uniformVarBufferPtr = (uint8*)bufferPtr;
 
+	XBOX_D3D12_TRACE("V4.11 Creating texture readback buffer");
 	// texture readback buffer
 	if (!memoryManager->CreateBuffer(TEXTURE_READBACK_SIZE, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, m_textureReadbackBuffer, m_textureReadbackBufferMemory))
 	{
 		memoryManager->CreateBuffer(TEXTURE_READBACK_SIZE, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, m_textureReadbackBuffer, m_textureReadbackBufferMemory);
 	}
+	XBOX_D3D12_TRACE("V4.12 Mapping texture readback buffer");
 	bufferPtr = nullptr;
-	vkMapMemory(m_logicalDevice, m_textureReadbackBufferMemory, 0, VK_WHOLE_SIZE, 0, &bufferPtr);
+	if (!m_textureReadbackBufferMemory || vkMapMemory(m_logicalDevice, m_textureReadbackBufferMemory, 0, VK_WHOLE_SIZE, 0, &bufferPtr) != VK_SUCCESS || !bufferPtr)
+		throw std::runtime_error("Xbox One D3D12: unable to map texture readback buffer");
+	XBOX_D3D12_TRACE("V4.13 Texture readback buffer mapped");
 	m_textureReadbackBufferPtr = (uint8*)bufferPtr;
 
+	XBOX_D3D12_TRACE("V4.14 Creating transform feedback ringbuffer");
 	// transform feedback ringbuffer
 	VkBufferUsageFlags xfbRingBufferUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 	memoryManager->CreateBuffer(LatteStreamout_GetRingBufferSize(), xfbRingBufferUsage, 0, m_xfbRingBuffer, m_xfbRingBufferMemory);
 
+	XBOX_D3D12_TRACE("V4.15 Creating occlusion query buffer");
 	// occlusion query result buffer
 	if (!memoryManager->CreateBuffer(OCCLUSION_QUERY_POOL_SIZE * sizeof(uint64), VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, m_occlusionQueries.bufferQueryResults, m_occlusionQueries.memoryQueryResults))
 	{
 		memoryManager->CreateBuffer(OCCLUSION_QUERY_POOL_SIZE * sizeof(uint64), VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, m_occlusionQueries.bufferQueryResults, m_occlusionQueries.memoryQueryResults);
 	}
+	XBOX_D3D12_TRACE("V4.16 Mapping occlusion query buffer");
 	bufferPtr = nullptr;
-	vkMapMemory(m_logicalDevice, m_occlusionQueries.memoryQueryResults, 0, VK_WHOLE_SIZE, 0, &bufferPtr);
+	if (!m_occlusionQueries.memoryQueryResults || vkMapMemory(m_logicalDevice, m_occlusionQueries.memoryQueryResults, 0, VK_WHOLE_SIZE, 0, &bufferPtr) != VK_SUCCESS || !bufferPtr)
+		throw std::runtime_error("Xbox One D3D12: unable to map occlusion query buffer");
+	XBOX_D3D12_TRACE("V4.17 Occlusion query buffer mapped");
 	m_occlusionQueries.ptrQueryResults = (uint64*)bufferPtr;
 
 	for (sint32 i = 0; i < OCCLUSION_QUERY_POOL_SIZE; i++)
 		m_occlusionQueries.list_availableQueryIndices.emplace_back(i);
 
 	// start compilation threads
+	XBOX_D3D12_TRACE("V4.18 Initializing shader compiler");
 	RendererShaderVk::Init(); // shaders
+	XBOX_D3D12_TRACE("V4.19 Starting pipeline workers");
 	PipelineCompiler::CompileThreadPool_Start(); // pipelines
+	XBOX_D3D12_TRACE("V4.20 Vulkan renderer constructor complete");
 }
 
 VulkanRenderer::~VulkanRenderer()
@@ -2024,11 +2067,15 @@ void VulkanRenderer::QueryAvailableFormats()
 	{
 		m_supportedFormatInfo.fmt_a1r5g5b5_unorm_pack = true;
 	}
-	// print info about unsupported formats to log
+	// Record each format probe on the console. The last START without OK
+	// identifies a failing GPU capability query even after a native crash.
+	XBOX_D3D12_TRACE("V4.F0 initial five format probes complete");
 	for (auto& it : requestedFormatList)
 	{
+		XBOX_D3D12_TRACE(fmt::format("V4.F1 probing {}", it.name));
 		fmtProp = {};
 		vkGetPhysicalDeviceFormatProperties(m_physicalDevice, it.fmt, &fmtProp);
+		XBOX_D3D12_TRACE(fmt::format("V4.F2 queried {}", it.name));
 		VkFormatFeatureFlags requestedBits = 0;
 		if (it.mustSupportAttachment)
 		{
