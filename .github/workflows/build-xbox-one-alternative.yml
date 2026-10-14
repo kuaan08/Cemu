@@ -1,0 +1,247 @@
+name: Cemu Xbox One - Alternative x64 MSIX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-xbox-one-alternative.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-x64:
+    name: Build and sign x64 MSIX without trust-store modification
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout build tooling
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: kit
+
+      - name: Checkout Cemu core
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/cemu-core
+          path: Cemu
+          submodules: recursive
+
+      - name: Checkout patched UWP host
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/uwp-host
+          path: Cemu-UWP-Host
+
+      - name: Checkout SDL3 UWP
+        uses: actions/checkout@v4
+        with:
+          ref: xbox-one/sdl3-uwp
+          path: SDL3-uwp
+
+      - name: Show Windows C++ tooling and check source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = (& $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -property installationPath | Select-Object -First 1)
+          if (!$vs) { throw 'Visual Studio with MSBuild is unavailable on runner' }
+          "VS=$vs" >> $env:GITHUB_ENV
+          Write-Host "Visual Studio: $vs"
+          Get-ChildItem 'Cemu\dependencies' -Force | Select-Object -First 15 Name
+          $zarchive = Get-Content 'Cemu/dependencies/ZArchive/include/zarchive/zarchivereader.h' -Raw
+          if (!$zarchive.Contains('OpenFromStream')) {
+            throw 'Outdated ZArchive submodule: expected OpenFromStream. Check xbox-one/cemu-core submodule pointer and recursive checkout.'
+          }
+          Write-Host 'Verified ZArchive exposes OpenFromStream.'
+          $hostHeader = Get-Content 'Cemu-UWP-Host/Cemu_UWP_HostMain.h' -Raw
+          $hostSource = Get-Content 'Cemu-UWP-Host/Cemu_UWP_HostMain.cpp' -Raw
+          $deviceHeader = Get-Content 'Cemu-UWP-Host/Common/DeviceResources.h' -Raw
+          $deviceSource = Get-Content 'Cemu-UWP-Host/Common/DeviceResources.cpp' -Raw
+          if (!$hostHeader.Contains('void ReplaceD3D11Surface(') -or !$hostSource.Contains('void Cemu_UWP_HostMain::ReplaceD3D11Surface(')) {
+            throw 'UWP host surface replacement declaration and implementation are inconsistent.'
+          }
+          if (!$deviceHeader.Contains('void DetachSwapChainPanel();') -or !$deviceSource.Contains('void DX::DeviceResources::DetachSwapChainPanel()')) {
+            throw 'DeviceResources swapchain detachment declaration and implementation are inconsistent.'
+          }
+          Write-Host 'Verified UWP host surface and swapchain APIs.'
+          foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
+                          'SDL3-uwp\CMakeLists.txt',
+                          'Cemu-UWP-Host\XboxOneProbe.h')) {
+            if (!(Test-Path $p)) { throw "Missing required file: $p" }
+          }
+
+      # This cache stores compiled vcpkg package archives, not the full build
+      # tree. Its ABI hashes are rechecked by vcpkg before packages are reused.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-xboxone-v2-vs2026-${{ hashFiles('Cemu/cmake/vcpkg-embed/vcpkg.json', 'Cemu/dependencies/vcpkg_overlay_ports/**', 'Cemu/dependencies/vcpkg_overlay_ports_win/**') }}
+          restore-keys: |
+            vcpkg-xboxone-v2-vs2026-
+            vcpkg-xboxone-windows-v1-
+
+      - name: Configure Cemu runtime x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdl = (Resolve-Path 'SDL3-uwp').Path
+          $env:VCPKG_DEFAULT_BINARY_CACHE = Join-Path $env:GITHUB_WORKSPACE 'vcpkg-binary-cache'
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:VCPKG_DEFAULT_BINARY_CACHE" >> $env:GITHUB_ENV
+          cmake -S Cemu -B Cemu/build-xbox-one -G 'Visual Studio 18 2026' -A x64 -DCEMU_UWP=ON -DENABLE_D3D11=ON -DENABLE_D3D12=ON "-DSDL3_UWP_SOURCE_DIR=$sdl"
+          if ($LASTEXITCODE -ne 0) { throw "Cemu CMake configure failed (exit $LASTEXITCODE)" }
+
+      # Save immediately after CMake/vcpkg finishes. A later C++/UWP build
+      # failure must not discard all successfully built dependencies.
+      - name: Save vcpkg binaries before compiling Cemu
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-xboxone-v2-vs2026-${{ hashFiles('Cemu/cmake/vcpkg-embed/vcpkg.json', 'Cemu/dependencies/vcpkg_overlay_ports/**', 'Cemu/dependencies/vcpkg_overlay_ports_win/**') }}
+
+      - name: Compile embedded Cemu runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build Cemu/build-xbox-one --config Release --target CemuBin --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Cemu runtime build failed (exit $LASTEXITCODE)" }
+          foreach ($name in @('Cemu_release.dll', 'Cemu_release.lib')) {
+            if (!(Test-Path (Join-Path 'Cemu/bin' $name))) { throw "Missing runtime output: $name" }
+          }
+
+      - name: Prepare independent Xbox One test package identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = 'Cemu-UWP-Host/Package.appxmanifest'
+          $xml = Get-Content $manifest -Raw
+          $xml = $xml.Replace('Name="9603d93f-a7c7-491d-9d0b-1a0930897231"', 'Name="kuaan08.CemuXboxOneV1"')
+          $xml = $xml.Replace('Publisher="CN=rodri"', 'Publisher="CN=Kuaan08"')
+          $xml = $xml.Replace('Version="1.0.10.0"', 'Version="1.0.0.0"')
+          Set-Content -Path $manifest -Value $xml -Encoding utf8
+          [xml]$validated = Get-Content $manifest
+          $identity = $validated.Package.Identity
+          Write-Host "Package identity: $($identity.Name), publisher: $($identity.Publisher)"
+          if ($identity.Publisher -ne 'CN=Kuaan08') { throw 'Unexpected package publisher' }
+
+      - name: Compile and package x64 UWP host (unsigned)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msbuild = Join-Path $env:VS 'MSBuild\Current\Bin\MSBuild.exe'
+          if (!(Test-Path $msbuild)) { throw "MSBuild missing: $msbuild" }
+          & $msbuild 'Cemu-UWP-Host/Cemu-UWP-Host.vcxproj' /restore /m:2 /p:Configuration=Release /p:Platform=x64 /p:AppxPackageSigningEnabled=false /p:AppxBundle=Never /p:GenerateAppInstallerFile=false /p:UapAppxPackageBuildMode=SideloadOnly /verbosity:minimal
+          if ($LASTEXITCODE -ne 0) { throw "UWP host MSBuild failed (exit $LASTEXITCODE)" }
+
+      - name: Sign MSIX directly (no certificate trust-store import)
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'xbox-one-output'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $packageRoot = Join-Path $env:GITHUB_WORKSPACE 'Cemu-UWP-Host/AppPackages'
+          if (!(Test-Path $packageRoot)) { throw 'MSBuild did not produce the AppPackages directory.' }
+          $packages = @(Get-ChildItem $packageRoot -Recurse -File | Where-Object {
+            $_.Name -match '_x64\.(msix|appx)$' -and
+            $_.FullName -notmatch '[\\/]Dependencies[\\/]'
+          })
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one x64 Cemu package; found $($packages.Count): $($packages.FullName -join ', ')"
+          }
+          $package = $packages[0]
+          Write-Host "Main x64 package: $($package.FullName)"
+
+          # Create a short-lived development certificate. Do not install it
+          # in Trusted Root/Trusted People; runner trust is not required to sign.
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Kuaan08' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -KeyUsage DigitalSignature
+          if (!$cert) { throw 'Failed to create the temporary signing certificate.' }
+          $publicCert = Join-Path $out 'Kuaan08-XboxOne-DevCertificate.cer'
+          Export-Certificate -Cert $cert -FilePath $publicCert | Out-Null
+          $password = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
+          $pfx = Join-Path $env:RUNNER_TEMP 'XboxOneSigningKey.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
+          $signTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe'
+          if (!(Test-Path $signTool)) { throw "SignTool not found: $signTool" }
+          & $signTool sign /fd SHA256 /f $pfx /p $password $package.FullName
+          if ($LASTEXITCODE -ne 0) { throw "MSIX signing failed (exit $LASTEXITCODE)" }
+          Write-Host 'SignTool reported successful signing.'
+
+          # Structural check: AppX/MSIX ZIP must contain signature and manifest.
+          # This is not certificate-chain trust validation on the Xbox device.
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
+          try {
+            $entries = @($zip.Entries | ForEach-Object FullName)
+            if ('AppxSignature.p7x' -notin $entries -or 'AppxManifest.xml' -notin $entries) {
+              throw 'MSIX is missing its signature or package manifest.'
+            }
+            Write-Host 'MSIX signature block and manifest are present.'
+          }
+          finally {
+            $zip.Dispose()
+          }
+
+          Copy-Item $package.FullName -Destination (Join-Path $out $package.Name)
+          $dependencies = @(Get-ChildItem $packageRoot -Recurse -File | Where-Object {
+            $_.FullName -match '[\\/]Dependencies[\\/]x64[\\/]' -and
+            $_.Extension -in @('.appx', '.msix')
+          })
+          if ($dependencies.Count -gt 0) {
+            $depOut = Join-Path $out 'Dependencies/x64'
+            New-Item -ItemType Directory -Force -Path $depOut | Out-Null
+            foreach ($dep in $dependencies) {
+              Copy-Item $dep.FullName -Destination (Join-Path $depOut $dep.Name)
+            }
+          }
+          @'
+          Cemu Xbox One - Alternative signing workflow (EXPERIMENTAL)
+
+          The x64 MSIX was signed using a temporary self-signed developer certificate.
+          The GitHub runner DOES NOT trust this certificate and it has NOT been installed
+          into a trusted certificate store in the CI runner.
+
+          1. Enable Xbox One Developer Mode.
+          2. Install/trust the supplied public .cer on the test device where supported.
+          3. Deploy the x64 MSIX and any x64 Dependencies using Xbox Device Portal.
+          4. Set the application type to Game and launch.
+          5. Collect deployment and startup logs; Wii U game functionality is untested.
+
+          The signing private key/PFX is NOT included.
+          Microsoft-signed dependency packages were not re-signed.
+          Signed/structurally valid MSIX does not guarantee the console will accept it.
+          '@ | Set-Content -Path (Join-Path $out 'INSTALL.txt') -Encoding utf8
+          Write-Host "Package signed: $($package.Name). Included $($dependencies.Count) x64 dependency packages."
+          $global:LASTEXITCODE = 0
+
+      - name: Upload signed Xbox One package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cemu-XboxOne-V1-UWP-x64-ALT-SIGNED
+          path: xbox-one-output/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload troubleshooting logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cemu-XboxOne-V1-ALT-build-logs
+          path: |
+            Cemu/build-xbox-one/CMakeCache.txt
+            Cemu/build-xbox-one/CMakeFiles/CMakeConfigureLog.yaml
+            Cemu/build-xbox-one/vcpkg_installed/vcpkg/issue_body.md
+            Cemu/build-xbox-one/vcpkg_installed/vcpkg/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
