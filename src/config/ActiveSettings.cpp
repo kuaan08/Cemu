@@ -114,6 +114,16 @@ bool ActiveSettings::WaitForGX2DrawDoneEnabled()
 
 GraphicAPI ActiveSettings::GetGraphicsAPI()
 {
+#if defined(CEMU_XBOX_ONE_V1)
+	// Original Xbox One's UWP presentation device is D3D11 FL10_1, but the
+	// embedded D3D11 renderer strictly requires FL11_0. Use the separate
+	// experimental D3D12 renderer even if a game profile saved D3D11.
+	// Do not report FL11_0 capabilities that the host device does not have.
+#if !defined(ENABLE_D3D12)
+#error "The Xbox One V1 runtime requires the D3D12 renderer"
+#endif
+	return kD3D12;
+#endif
 	const GraphicAPI api = g_current_game_profile->GetGraphicsAPI().value_or(GetConfig().graphic_api);
 	std::optional<GraphicAPI> fallbackAPI;
 #ifdef ENABLE_D3D11
