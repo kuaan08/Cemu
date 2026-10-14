@@ -69,6 +69,17 @@ jobs:
             throw 'DeviceResources swapchain detachment declaration and implementation are inconsistent.'
           }
           Write-Host 'Verified UWP host surface and swapchain APIs.'
+          # The Xbox One FL10_1 host cannot run the strict FL11_0 D3D11 renderer.
+          # Ensure the embedded Cemu DLL has its own D3D12-only Xbox profile.
+          $cmakeConfig = Get-Content 'Cemu/CMakeLists.txt' -Raw
+          $rendererSettings = Get-Content 'Cemu/src/config/ActiveSettings.cpp' -Raw
+          $embedRuntime = Get-Content 'Cemu/src/Cemu/CemuEmbed.cpp' -Raw
+          if (!$cmakeConfig.Contains('option(CEMU_XBOX_ONE_V1') -or
+              !$rendererSettings.Contains('return kD3D12;') -or
+              !$embedRuntime.Contains('GetConfig().graphic_api.SetValue(GraphicAPI::kD3D12);')) {
+            throw 'Xbox One-specific D3D12 override is missing from Cemu runtime sources.'
+          }
+          Write-Host 'Verified Xbox One D3D12 runtime selection.'
           foreach ($p in @('Cemu\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake',
                           'SDL3-uwp\CMakeLists.txt',
                           'Cemu-UWP-Host\XboxOneProbe.h')) {
@@ -95,7 +106,7 @@ jobs:
           $env:VCPKG_DEFAULT_BINARY_CACHE = Join-Path $env:GITHUB_WORKSPACE 'vcpkg-binary-cache'
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           "VCPKG_DEFAULT_BINARY_CACHE=$env:VCPKG_DEFAULT_BINARY_CACHE" >> $env:GITHUB_ENV
-          cmake -S Cemu -B Cemu/build-xbox-one -G 'Visual Studio 18 2026' -A x64 -DCEMU_UWP=ON -DENABLE_D3D11=ON -DENABLE_D3D12=ON "-DSDL3_UWP_SOURCE_DIR=$sdl"
+          cmake -S Cemu -B Cemu/build-xbox-one -G 'Visual Studio 18 2026' -A x64 -DCEMU_UWP=ON -DCEMU_XBOX_ONE_V1=ON -DENABLE_D3D11=ON -DENABLE_D3D12=ON "-DSDL3_UWP_SOURCE_DIR=$sdl"
           if ($LASTEXITCODE -ne 0) { throw "Cemu CMake configure failed (exit $LASTEXITCODE)" }
 
       # Save immediately after CMake/vcpkg finishes. A later C++/UWP build
@@ -204,7 +215,7 @@ jobs:
             }
           }
           @'
-          Cemu Xbox One - Alternative signing workflow (EXPERIMENTAL)
+          Cemu Xbox One V2 - D3D12 renderer fix (EXPERIMENTAL)
 
           The x64 MSIX was signed using a temporary self-signed developer certificate.
           The GitHub runner DOES NOT trust this certificate and it has NOT been installed
@@ -214,7 +225,7 @@ jobs:
           2. Install/trust the supplied public .cer on the test device where supported.
           3. Deploy the x64 MSIX and any x64 Dependencies using Xbox Device Portal.
           4. Set the application type to Game and launch.
-          5. Collect deployment and startup logs; Wii U game functionality is untested.
+          5. Collect deployment and startup logs; This build forces the experimental D3D12 graphics API in Cemu; hardware compatibility and Wii U game functionality remain untested.
 
           The signing private key/PFX is NOT included.
           Microsoft-signed dependency packages were not re-signed.
@@ -227,7 +238,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Cemu-XboxOne-V1-UWP-x64-ALT-SIGNED
+          name: Cemu-XboxOne-V2-D3D12-x64-ALT-SIGNED
           path: xbox-one-output/*
           if-no-files-found: error
           retention-days: 14
