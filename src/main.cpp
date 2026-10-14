@@ -144,12 +144,21 @@ void CemuCommonInit(bool embedded)
 	// init PPC timer
 	// call this as early as possible because it measures frequency of RDTSC using an asynchronous thread over 3 seconds
 	PPCTimer_init();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("02 PPC timer initialized");
+#endif
 
 	if (!embedded)
 		WindowsInitCwd();
     ExceptionHandler_Init();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("03 Exception handler installed");
+#endif
 	// read config
 	GetConfigHandle().Load();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("04 settings.xml loaded");
+#endif
 	if (NetworkConfig::XMLExists())
 		n_config.Load();
 	// parallelize expensive init code
