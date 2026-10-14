@@ -231,7 +231,8 @@ jobs:
           2. Install/trust the supplied public .cer on the test device where supported.
           3. Deploy the x64 MSIX and any x64 Dependencies using Xbox Device Portal.
           4. Set the application type to Game and launch.
-          5. Collect deployment and startup logs; This build forces the experimental D3D12 graphics API in Cemu; hardware compatibility and Wii U game functionality remain untested.
+          5. After any crash, open Xbox Device Portal > File Explorer > LocalAppData > Cemu > LocalState. Download xbox-one-startup.txt and log.txt if present.
+          6. The D3D12 backend is experimental; Wii U game functionality remains untested.
 
           The signing private key/PFX is NOT included.
           Microsoft-signed dependency packages were not re-signed.
