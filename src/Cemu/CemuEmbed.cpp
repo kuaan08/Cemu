@@ -1210,6 +1210,12 @@ void Initialize(CemuEmbedInstance* instance) {
 		GetConfigHandle().SetFilename(ActiveSettings::GetConfigPath("settings.xml").generic_wstring());
 		NetworkConfig::LoadOnce();
 		ActiveSettings::Init();
+#if defined(CEMU_XBOX_ONE_V1)
+		// The UWP host can only apply its UI-selected graphics API after embedded
+		// initialization. Set it here, before CemuCommonInit creates a renderer.
+		// ActiveSettings::GetGraphicsAPI additionally prevents per-game overrides.
+		GetConfig().graphic_api.SetValue(GraphicAPI::kD3D12);
+#endif
 		// The embedded host chooses this before initialization. Apply it after
 		// settings.xml is loaded and before the emulated USB backend is attached.
 		GetConfig().emulated_usb_devices.emulate_dimensions_toypad =
