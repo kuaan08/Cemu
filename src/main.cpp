@@ -20,6 +20,9 @@
 
 #include "util/helpers/helpers.h"
 #include "config/ActiveSettings.h"
+#if defined(CEMU_XBOX_ONE_V1)
+#include <fstream>
+#endif
 
 #include "Cafe/IOSU/legacy/iosu_crypto.h"
 #include "Cafe/OS/libs/vpad/vpad.h"
@@ -113,8 +116,25 @@ void WindowsInitCwd()
 	#endif
 }
 
+#if defined(CEMU_XBOX_ONE_V1)
+// Synchronous breadcrumbs survive a native crash during early Xbox startup.
+// Stored in the UWP app's LocalState next to log.txt; no network access.
+static void XboxOneStartupTrace(const char* stage) noexcept
+{
+	try
+	{
+		std::ofstream out(ActiveSettings::GetUserDataPath("xbox-one-startup.txt"), std::ios::app);
+		if (out) { out << stage << '\n'; out.flush(); }
+	}
+	catch (...) {}
+}
+#endif
+
 void CemuCommonInit(bool embedded)
 {
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("01 CemuCommonInit entered");
+#endif
 	CemuRuntime::SetEmbeddingMode(embedded);
 	CemuRuntime::ClearFatalError();
 	reconfigureGLDrivers();
@@ -136,10 +156,19 @@ void CemuCommonInit(bool embedded)
 	std::future<int> futureInitAudioAPI = std::async(std::launch::async, []{ IAudioAPI::InitializeStatic(); IAudioInputAPI::InitializeStatic(); return 0; });
 	std::future<int> futureInitGraphicPacks = std::async(std::launch::async, []{ GraphicPack2::LoadAll(); return 0; });
 	InputManager::instance().load();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("05 input manager initialized");
+#endif
 	futureInitAudioAPI.wait();
 	futureInitGraphicPacks.wait();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("06 audio and graphic pack workers completed");
+#endif
 	// init Cafe system
 	CafeSystem::Initialize();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("07 Cafe system initialized");
+#endif
 	// init title list
 	CafeTitleList::Initialize(ActiveSettings::GetUserDataPath("title_list_cache.xml"));
 	for (auto& it : GetConfig().game_paths)
@@ -148,6 +177,9 @@ void CemuCommonInit(bool embedded)
 	if (!mlcPath.empty())
 		CafeTitleList::SetMLCPath(mlcPath);
 	CafeTitleList::Refresh();
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("08 titles refreshed");
+#endif
 	// init save list
 	CafeSaveList::Initialize();
 	if (!mlcPath.empty())
@@ -155,10 +187,21 @@ void CemuCommonInit(bool embedded)
 		CafeSaveList::SetMLCPath(mlcPath);
 		CafeSaveList::Refresh();
 	}
+#if defined(CEMU_XBOX_ONE_V1)
+	XboxOneStartupTrace("09 title and save lists initialized, before renderer");
+#endif
 	// Desktop frontends create their renderer when their wx canvas is created.
 	// The embedded frontend has no canvas, so initialize its native surface now.
 	if (embedded)
+	{
+#if defined(CEMU_XBOX_ONE_V1)
+		XboxOneStartupTrace("10 starting D3D12 renderer construction");
+#endif
 		WindowSystem::Create();
+#if defined(CEMU_XBOX_ONE_V1)
+		XboxOneStartupTrace("11 D3D12 renderer constructed successfully");
+#endif
+	}
 }
 
 void mainEmulatorLLE();
